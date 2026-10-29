@@ -24,6 +24,10 @@ dev = [
     "pytest==8.3.3",
     "pytest-asyncio==0.24.0",
 ]
+otel = [
+    "opentelemetry-sdk>=1.43.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.43.0",
+]
 
 [build-system]
 requires = ["hatchling"]
