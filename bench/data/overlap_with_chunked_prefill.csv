@@ -1,0 +1,3 @@
+mode,median_ttft_ms,p90_ttft_ms,n_requests
+chunked+overlap,520.54,938.08,32
+sync-no-overlap,437.56,862.91,32
