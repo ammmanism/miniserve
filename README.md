@@ -8,7 +8,7 @@
 
 <br/>
 
-[![Status](https://img.shields.io/badge/build-v0.7%20passing-34D399?style=for-the-badge&logo=githubactions&logoColor=white)](https://github.com/ammmanism/miniserve)
+[![CI](https://github.com/ammmanism/miniserve/actions/workflows/ci.yml/badge.svg?style=for-the-badge)](https://github.com/ammmanism/miniserve/actions/workflows/ci.yml)
 [![Parity](https://img.shields.io/badge/parity%20vs%20HF-200%2F200-818CF8?style=for-the-badge&logo=python&logoColor=white)](tests/test_parity.py)
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
 [![Triton](https://img.shields.io/badge/Triton-3.1.0-blue?style=for-the-badge&logo=openai&logoColor=white)](https://github.com/openai/triton)

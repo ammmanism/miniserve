@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install ruff
+        run: pip install ruff==0.8.4
+      - name: Syntax + undefined-name check
+        run: ruff check --select E9,F63,F7,F82 --show-source .
+
+  unit:
+    name: unit tests (fast suite)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU-only torch first (small wheel)
+        run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install project
+        run: pip install -e ".[dev]"
+      - name: Run fast suite (blocks, prefix cache, scheduler, overlap, engine, server, triton)
+        run: pytest tests/ -q --ignore tests/test_parity.py
+
+  parity-smoke:
+    name: parity smoke vs HuggingFace (8 prompts)
+    runs-on: ubuntu-latest
+    env:
+      MINISERVE_PARITY_PROMPTS: "8"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Cache HuggingFace weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen2.5-0.5b-instruct
+      - name: Install CPU-only torch first (small wheel)
+        run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install project + transformers
+        run: pip install -e ".[dev]" "transformers==5.13.0"
+      - name: Greedy parity vs HuggingFace
+        run: pytest tests/test_parity.py -q
