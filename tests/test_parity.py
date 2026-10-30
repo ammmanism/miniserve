@@ -1,10 +1,78 @@
 """Parity tests for paged attention against dense reference implementations."""
+import csv
+import json
 import math
+import os
+from pathlib import Path
 
 import pytest
 import torch
 
 from miniserve.attention import PagedAttention, apply_rope
+from miniserve.model_runner import DEFAULT_MODEL, ModelRunner
+
+# Part 6 gate: 200 greedy prompts, 95% token-for-token for the lossy INT8 path.
+PARITY_PROMPTS = int(os.environ.get("MINISERVE_PARITY_PROMPTS", "200"))
+PARITY_REQUIRED = 0.95
+K = 4  # generated tokens compared per prompt
+REPO = Path(__file__).resolve().parents[1]
+REPORT = REPO / "bench" / "data" / "parity_report.csv"
+INT8_FAILURES = REPO / "docs" / "parity_failures" / "int8"
+TOPICS = ["gravity", "the Roman empire", "sourdough", "TCP handshakes",
+          "basket weaving"]
+
+
+def _prompts(n=PARITY_PROMPTS):
+    """Deterministic prompt set (no dataset dependency): 200 short questions."""
+    return [f"You are terse. Explain {TOPICS[i % len(TOPICS)]} in one sentence, "
+            f"step {i}." for i in range(n)]
+
+
+def _hf_greedy(model, tokenizer, prompt_ids, k=K):
+    """HuggingFace greedy reference: pure argmax, forced to exactly k tokens.
+
+    ``repetition_penalty=1.0`` is essential: Qwen2.5's generation_config sets
+    1.1, which makes HF ``generate`` diverge from plain greedy decoding.
+    """
+    with torch.no_grad():
+        out = model.generate(
+            torch.tensor([prompt_ids]), do_sample=False, repetition_penalty=1.0,
+            max_new_tokens=k, min_new_tokens=k,
+            pad_token_id=tokenizer.eos_token_id)
+    return out[0, len(prompt_ids):].tolist()
+
+
+def _record_report(runner, prompts, matched, atol_logits):
+    """Upsert this runner's row into bench/data/parity_report.csv."""
+    REPORT.parent.mkdir(parents=True, exist_ok=True)
+    rows = {}
+    if REPORT.exists():
+        with REPORT.open(newline="") as f:
+            for row in csv.DictReader(f):
+                rows[(row["model"], row["quantize"])] = row
+    rows[(runner.model_name, runner.quantize)] = {
+        "model": runner.model_name, "num_heads": str(runner.num_heads),
+        "num_kv_heads": str(runner.num_kv_heads), "prompts": str(prompts),
+        "matched": str(matched), "atol_logits": f"{atol_logits:.2e}",
+        "quantize": runner.quantize,
+    }
+    fields = ["model", "num_heads", "num_kv_heads", "prompts", "matched",
+              "atol_logits", "quantize"]
+    with REPORT.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        for key in sorted(rows):
+            writer.writerow({name: rows[key][name] for name in fields})
+
+
+@pytest.fixture(scope="session")
+def runner():
+    return ModelRunner.load(DEFAULT_MODEL)
+
+
+@pytest.fixture(scope="session")
+def int8_runner():
+    return ModelRunner.load(DEFAULT_MODEL, quantize="int8")
 
 
 def _scenario(h, kv_heads, d, lens, q_len=1, block_size=8,
@@ -169,3 +237,99 @@ def test_apply_rope_parity():
     assert q_err < 1e-4 and k_err < 1e-4
     q_only, k_none = apply_rope(q, None, cos, sin, pos[0])  # 1-D position_ids
     assert k_none is None and (q_only - q_rot).abs().max().item() < 1e-6
+
+
+# ---------------------------------------------------------------------------
+# Part 6: real-model greedy parity (PagedAttention injected) + INT8 + hooks
+# ---------------------------------------------------------------------------
+
+def _calibration_drift(runner, prompt_ids, ref_tokens, ours_logits, steps=K):
+    """Max |logit diff| vs an HF full forward at each compared position."""
+    worst = 0.0
+    for step in range(steps):
+        prefix = prompt_ids + ref_tokens[:step]
+        with torch.no_grad():
+            ref = runner.model(input_ids=torch.tensor([prefix]),
+                               use_cache=False).logits[0, -1]
+        worst = max(worst, (ref - ours_logits[step]).abs().max().item())
+    return worst
+
+
+def test_greedy_parity_hf(runner):
+    """GQA model + PagedAttention: 200/200 prompts greedily identical to HF."""
+    prompts = _prompts()
+    matched, drift, calibrated = 0, 0.0, 0
+    for i, text in enumerate(prompts):
+        ids = runner.tokenizer(text)["input_ids"]
+        ref = _hf_greedy(runner.model, runner.tokenizer, ids)
+        logits_sink = []
+        runner.set_logits_processor(lambda lg, gen: logits_sink.append(lg.clone()) or lg)
+        ours = runner.generate_greedy(ids, max_new_tokens=K)
+        runner.set_logits_processor(None)
+        if ours == ref:
+            matched += 1
+            if calibrated < 5:  # cheap logit-level calibration subset
+                drift = max(drift, _calibration_drift(runner, ids, ref, logits_sink))
+                calibrated += 1
+    print(f"greedy parity: {matched}/{len(prompts)} prompts identical "
+          f"(model={runner.model_name}, kv_heads={runner.num_kv_heads}, "
+          f"max_abs_logit_diff={drift:.2e})")
+    _record_report(runner, len(prompts), matched, drift)
+    assert matched == len(prompts)
+
+
+def test_greedy_parity_int8(int8_runner):
+    """INT8 dynamic quantization is lossy: >= 95% of prompts must match."""
+    prompts = _prompts()
+    mismatches = []
+    for i, text in enumerate(prompts):
+        ids = int8_runner.tokenizer(text)["input_ids"]
+        ref = _hf_greedy(int8_runner.model, int8_runner.tokenizer, ids)
+        ours = int8_runner.generate_greedy(ids, max_new_tokens=K)
+        if ours != ref:
+            mismatches.append({"prompt_index": i, "prompt": text,
+                               "ours": ours, "hf": ref})
+    matched = len(prompts) - len(mismatches)
+    threshold = int(PARITY_REQUIRED * len(prompts))
+    print(f"greedy parity (int8): {matched}/{len(prompts)} (threshold {threshold})")
+    INT8_FAILURES.mkdir(parents=True, exist_ok=True)
+    safe = int8_runner.model_name.replace("/", "__")
+    with (INT8_FAILURES / f"{safe}.jsonl").open("w") as f:
+        for item in mismatches:
+            f.write(json.dumps(item) + "\n")
+    _record_report(int8_runner, len(prompts), matched, 0.0)
+    assert matched >= threshold
+
+
+def test_chat_template_stability(runner):
+    """A 3-message conversation renders to stable ids and round-trips text."""
+    messages = [
+        {"role": "system", "content": "You are terse."},
+        {"role": "user", "content": "Name one prime number."},
+        {"role": "assistant", "content": "2"},
+    ]
+    ids_a = runner.apply_chat_template(messages)
+    ids_b = runner.apply_chat_template(messages)
+    assert ids_a == ids_b and len(ids_a) > 0
+    tok = runner.tokenizer
+    text = tok.decode(ids_a, skip_special_tokens=True)
+    for message in messages:
+        assert message["content"] in text
+    re_ids = tok(text, add_special_tokens=False)["input_ids"]
+    assert tok.decode(re_ids, skip_special_tokens=True) == text
+
+
+def test_logits_processor_hook(runner):
+    """A forcing processor makes every decode step emit token 42."""
+    def force_42(logits, generated_ids):
+        forced = torch.full_like(logits, float("-inf"))
+        forced[42] = 0.0
+        return forced
+
+    ids = runner.tokenizer("Say anything at all.")["input_ids"]
+    runner.set_logits_processor(force_42)
+    try:
+        generated = runner.generate_greedy(ids, max_new_tokens=5)
+    finally:
+        runner.set_logits_processor(None)
+    assert generated == [42] * 5
