@@ -1,0 +1,11 @@
+shared_prefix_tokens,matched_tokens,wasted_tokens,block_size,hardware
+8,0,8,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+15,0,15,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+16,16,0,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+17,16,1,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+30,16,14,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+31,16,15,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+32,32,0,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+48,48,0,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+64,64,0,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+128,128,0,16,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
