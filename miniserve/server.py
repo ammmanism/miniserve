@@ -26,6 +26,7 @@ from miniserve.protocol import (
     CompletionChoice, CompletionRequest, CompletionResponse,
     StreamChunk, StreamDelta, UsageInfo,
 )
+from miniserve.metrics import METRICS
 from miniserve.sampler import JSONLogitsProcessor, Sampler
 from miniserve.stream import SSEStream, sse_done, sse_event
 
@@ -279,6 +280,7 @@ def create_app(
 
         # Primary generation
         _queue_depth += 1
+        t_req = time.perf_counter()
         try:
             _inflight += 1
             span_ctx = None
@@ -304,6 +306,13 @@ def create_app(
 
             entry.result = text
             entry.done.set()
+
+            n_tokens = len(text.split())
+            METRICS.observe("miniserve_ttft_seconds",
+                            time.perf_counter() - t_req)
+            METRICS.counter("miniserve_tokens_total", n_tokens,
+                            {"kind": "generated"})
+            METRICS.counter("miniserve_requests_total", 1, {"status": "ok"})
 
             if req.stream:
                 # Broadcast chunks to dedup subscribers
@@ -340,5 +349,11 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "inflight": _inflight, "queue": _queue_depth}
+
+    @app.get("/metrics")
+    async def metrics_endpoint() -> Response:
+        """Prometheus exposition: HTTP layer + scheduler-batching series."""
+        return Response(content=METRICS.render(),
+                        media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return app
