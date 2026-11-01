@@ -1,0 +1,2 @@
+source,device,hardware,model,seed,concurrency,isl,osl,requests,total_tokens,wall_s,throughput_tok_s,ttft_p50_ms,ttft_p99_ms,itl_p50_ms,itl_p99_ms,gpu_hourly_usd,cost_per_1m_tokens,power_w,tokens_per_joule
+engine,cpu,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel,Qwen/Qwen2.5-0.5B-Instruct,42,1,64,4,1,4,6.963221499987412,0.5744467557160476,4814.396300003864,4814.396300003864,776.3122999749612,785.5781000107527,,,,

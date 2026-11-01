@@ -1,0 +1,2 @@
+concurrency,isl,osl,arithmetic_intensity,achieved_tflops,wall_s,tokens_processed
+1,64,4,0.4996,0.009649,6.9632,68
