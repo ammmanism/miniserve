@@ -32,11 +32,16 @@ jobs:
         with:
           python-version: "3.12"
           cache: pip
+      - name: Cache HuggingFace weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen2.5-0.5b-instruct
       - name: Install CPU-only torch first (small wheel)
         run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
       - name: Install project
-        run: pip install -e ".[dev]"
-      - name: Run fast suite (blocks, prefix cache, scheduler, overlap, engine, server, triton)
+        run: pip install -e ".[dev]" "transformers==5.13.0"
+      - name: Run fast suite (blocks, prefix cache, scheduler, overlap, engine, server, triton, cuda graph)
         run: pytest tests/ -q --ignore tests/test_parity.py
 
   parity-smoke:
