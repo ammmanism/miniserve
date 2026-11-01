@@ -59,6 +59,15 @@ def _paged_attention_forward(
     v = self.v_proj(hidden_states).view(shape).transpose(1, 2)
     q, k = apply_rotary_pos_emb(q, k, *position_embeddings)
     state = runner.layers[self.layer_idx]
+    if runner.row_starts is not None:  # batched decode: ragged per-row state
+        starts = runner.row_starts
+        state.pa.write_kv(state.k_cache, state.v_cache, k.transpose(1, 2),
+                          v.transpose(1, 2), state.block_table, start=starts)
+        out = state.pa.forward(q.transpose(1, 2), state.k_cache, state.v_cache,
+                               state.block_table, [s + 1 for s in starts],
+                               window=runner.window)
+        out = out.reshape(batch, seq, -1).contiguous()
+        return self.o_proj(out), None
     state.pa.write_kv(state.k_cache, state.v_cache, k.transpose(1, 2),
                       v.transpose(1, 2), state.block_table, start=runner.start)
     ctx_len = runner.start + seq
@@ -96,6 +105,7 @@ class ModelRunner:
         self.window = window
         self.start = 0
         self._active = False
+        self.row_starts: Optional[List[int]] = None  # batched decode mode
         self.logits_processor: Callable = lambda logits, generated: logits
         self.last_logits: torch.Tensor | None = None
         self.layers: List[_LayerState] = []
@@ -111,14 +121,15 @@ class ModelRunner:
             attn.forward = types.MethodType(_paged_attention_forward, attn)
 
     @classmethod
-    def load(cls, model_name: str = DEFAULT_MODEL, quantize: str = "none", **kwargs):
+    def load(cls, model_name: str = DEFAULT_MODEL, quantize: str = "none",
+             dtype: torch.dtype = torch.float32, **kwargs):
         """Load tokenizer + weights; ``quantize`` is "none" or "int8"."""
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         if quantize not in ("none", "int8"):
             raise ValueError(f"unknown quantize: {quantize}")
         tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
-        model = AutoModelForCausalLM.from_pretrained(model_name, dtype=torch.float32)
+        model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype, low_cpu_mem_usage=True)
         if quantize == "int8":
             # lm_head stays in fp32 (standard recipe): it is a 152k-vocab
             # output head; quantizing it distorts logits far beyond any
@@ -195,3 +206,117 @@ class ModelRunner:
         finally:
             self._active = False
         return generated
+
+class GraphedDecodeRunner:
+    """Bucketed CUDA-graph decode over the paged path (Part 9, Step A).
+
+    One graph per bucket in {1,2,4,8,16,32}; batches that are not a bucket
+    size replay the next-larger bucket with padding rows (block table -1,
+    context len 0 -- fully masked, output discarded), so any batch size
+    1..max gets graph speed.  Prefill is NOT graphed (documented).
+
+    Static buffers are sized for the max bucket and shared by every bucket's
+    graphs: the two alternating input sets (double buffering -- Part 8
+    prepared the alternation discipline) plus one shared output buffer.
+    On CUDA all captures share one torch.cuda.graph_pool_handle(), so total
+    memory tracks the max-bucket footprint, not the sum of buckets.  On a
+    CPU-only build, "capture" binds static buffers and "replay" runs the
+    same static-buffer call eagerly (mechanism honest, timing N/A).
+    """
+
+    def __init__(self, runner: ModelRunner,
+                 buckets: Sequence[int] = (1, 2, 4, 8, 16, 32)) -> None:
+        if sorted(buckets) != list(buckets) or buckets[0] < 1:
+            raise ValueError("buckets must be sorted, start at 1")
+        self.runner = runner
+        self.buckets = tuple(buckets)
+        self.max_batch = self.buckets[-1]
+        self.table_width = runner.max_blocks
+        self.replay_log: List[tuple[int, int]] = []
+        self._buf_idx = 0
+        self._graphs: dict[int, list] = {}
+        device = next(runner.model.parameters()).device
+        self._device = device
+        mk = lambda shape, fill=0: torch.full(shape, fill, dtype=torch.long,
+                                              device=device)
+        # two input sets (double buffering), each sized for the max bucket
+        self._in = [{"ids": mk((self.max_batch, 1)),
+                     "pos": mk((self.max_batch, 1)),
+                     "table": mk((self.max_batch, self.table_width), -1),
+                     "ctx": mk((self.max_batch,))}
+                    for _ in range(2)]
+        vocab = runner.model.config.vocab_size
+        self._out = torch.zeros((self.max_batch, vocab), dtype=torch.float32,
+                                device=device)
+
+    def _set_layers(self, table: torch.Tensor) -> None:
+        for state in self.runner.layers:
+            state.block_table = table
+
+    def _run_static(self, buf: dict, bucket: int) -> None:
+        """One decode step entirely on static buffers (captured on CUDA)."""
+        r = self.runner
+        r.row_starts = buf["ctx"][:bucket].tolist()
+        self._set_layers(buf["table"][:bucket])
+        out = r.model(input_ids=buf["ids"][:bucket],
+                      position_ids=buf["pos"][:bucket], use_cache=False)
+        self._out[:bucket] = out.logits[:, 0, :]
+        r.row_starts = None
+
+    def _bucket_fn(self, bucket: int, set_idx: int):
+        """Captured callable for this (bucket, buffer set)."""
+        if torch.cuda.is_available() and self._device.type == "cuda":
+            g = torch.cuda.CUDAGraph()
+            self._pool = getattr(self, "_pool", None) or torch.cuda.graph_pool_handle()
+            with torch.cuda.graph(g, pool=self._pool):  # shared pool: A4
+                self._run_static(self._in[set_idx], bucket)
+            return g.replay
+        return lambda: self._run_static(self._in[set_idx], bucket)  # CPU fallback
+
+    def decode(self, ids: Sequence[int], tables: Sequence[Sequence[int]],
+               ctx: Sequence[int], use_graph: bool = True) -> torch.Tensor:
+        """One decode step for len(ids) real rows; returns their logits.
+
+        Rows are padded to the next-larger bucket: pad rows get table -1
+        and context 0, which the paged attention fully masks out."""
+        B = len(ids)
+        if B > self.max_batch:
+            raise ValueError(f"batch {B} > max bucket {self.max_batch}")
+        bucket = next(b for b in self.buckets if b >= B)
+        if use_graph and bucket not in self._graphs:  # capture both sets lazily
+            self._graphs[bucket] = [self._bucket_fn(bucket, i) for i in range(2)]
+        idx = self._buf_idx
+        self._buf_idx = 1 - self._buf_idx
+        buf = self._in[idx]
+        buf["ids"].fill_(0)
+        buf["pos"].fill_(0)
+        buf["table"].fill_(-1)                 # pad rows: masked out entirely
+        buf["ctx"].fill_(0)
+        for b in range(B):
+            buf["ids"][b, 0] = ids[b]
+            buf["pos"][b, 0] = ctx[b]
+            row = tables[b]
+            buf["table"][b, :len(row)] = torch.as_tensor(row, dtype=torch.long,
+                                                         device=self._device)
+            buf["ctx"][b] = ctx[b]
+        if use_graph:
+            self._graphs[bucket][idx]()
+        else:
+            self._run_static(buf, bucket)      # eager reference on same buffers
+        self.replay_log.append((len(self.replay_log), idx))
+        return self._out[:B].detach().clone()
+
+    def memory_report(self) -> dict:
+        """Static-footprint accounting.  Statics are max-bucket-sized and
+        shared across buckets, so total tracks the max footprint (the
+        pool-persistence claim), not the sum over buckets."""
+        nb = lambda t: t.element_size() * t.numel()
+        per_set = sum(nb(v) for v in self._in[0].values())
+        out_b = nb(self._out)
+        max_fp = per_set + out_b               # one input set + one output
+        total = 2 * per_set + out_b
+        return {"per_input_set_bytes": per_set, "output_bytes": out_b,
+                "max_bucket_footprint_bytes": max_fp,
+                "total_static_bytes": total, "total_over_max": total / max_fp,
+                "shared_pool": bool(getattr(self, "_pool", None)) is not None
+                and torch.cuda.is_available()}
