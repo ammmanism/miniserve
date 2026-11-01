@@ -170,6 +170,38 @@ class PagedAttention:
             return cache.view(torch.uint8)[blk, off].view(cache.dtype)
         return cache[blk, off]
 
+    def _forward_triton_flash(
+        self,
+        query: torch.Tensor,
+        k_cache: torch.Tensor,
+        v_cache: torch.Tensor,
+        block_table: torch.Tensor,
+        context_lens: torch.Tensor | Sequence[int],
+        causal: bool,
+        window: int | None,
+        cos: torch.Tensor | None,
+        sin: torch.Tensor | None,
+        position: torch.Tensor | None,
+    ) -> torch.Tensor:
+        """Validate the decode-only Triton contract, then dispatch."""
+        if not causal:
+            raise ValueError("triton_flash supports causal decode only")
+        if (self.window if window is None else window) is not None:
+            raise ValueError("triton_flash does not support a sliding window")
+        if query.shape[1] != 1:
+            raise ValueError("triton_flash is decode-only (q_len == 1)")
+        if k_cache.dtype == torch.float8_e4m3fn or v_cache.dtype == torch.float8_e4m3fn:
+            raise ValueError("triton_flash does not support an FP8 KV cache")
+        from kernels.paged_attn_triton import flash_decode
+
+        table = torch.as_tensor(block_table, device=query.device, dtype=torch.long)
+        if table.ndim == 1:
+            table = table[None, :]
+        return flash_decode(
+            query, k_cache, v_cache, table, context_lens,
+            cos=cos, sin=sin, position=position,
+        )
+
     def forward(
         self,
         query: torch.Tensor,
@@ -179,8 +211,25 @@ class PagedAttention:
         context_lens: torch.Tensor | Sequence[int],
         causal: bool = True,
         window: int | None = None,
+        *,
+        backend: str = "sdpa",
+        cos: torch.Tensor | None = None,
+        sin: torch.Tensor | None = None,
+        position: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        """Paged SDPA.  ``window`` overrides the constructor value per call."""
+        """Paged attention.  ``window`` overrides the constructor value.
+
+        ``backend="triton_flash"`` selects the Part 9 split-K Triton kernel:
+        decode-only (q_len == 1), CUDA-only, no sliding window, optional fused
+        RoPE via ``cos``/``sin``/``position``.
+        """
+        if backend == "triton_flash":
+            return self._forward_triton_flash(
+                query, k_cache, v_cache, block_table, context_lens,
+                causal, window, cos, sin, position,
+            )
+        if backend != "sdpa":
+            raise ValueError(f"unknown attention backend: {backend!r}")
         window = self.window if window is None else window
         lens = torch.as_tensor(context_lens, device=self.device).reshape(-1)
         q_len = query.shape[1]

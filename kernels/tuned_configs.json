@@ -1,0 +1,11 @@
+{
+  "_comment": "Autotune space for kernels/paged_attn_triton.py::_split_kernel. These are the declared candidate configs, NOT measured winners: the authoring host has no CUDA GPU, so no tuning run has been performed. Re-run tune.py on a GPU to replace this file.",
+  "key": ["head_dim", "block_size"],
+  "measured": false,
+  "configs": [
+    {"block_size": 16, "num_warps": 4, "num_stages": 2},
+    {"block_size": 16, "num_warps": 8, "num_stages": 3},
+    {"block_size": 32, "num_warps": 4, "num_stages": 3},
+    {"block_size": 32, "num_warps": 8, "num_stages": 2}
+  ]
+}

@@ -154,7 +154,8 @@ The Python greedy sampler is the visible CPU-side gap (53 ms/token). Data:
 |:---|:---|:---:|:---:|:---|
 | Greedy parity vs HF | CI smoke 8/8; 200-prompt gate via `pytest tests/test_parity.py` | reference | reference | `tests/test_parity.py` |
 | Paged attention | PyTorch paged path | C++/CUDA | Triton/FlashInfer | `miniserve/attention.py` |
-| **Triton / FP8 decode kernel** | **not shipped** (`kernels/` empty) | yes | yes | `docs/GAP_ANALYSIS.md` Gap 1–2 |
+| Triton split-K decode kernel | shipped, **CUDA launch unverified here** | yes | yes | `kernels/paged_attn_triton.py` |
+| **FP8 GEMM / tensor-core matmul** | **not shipped** | yes | yes | `docs/GAP_ANALYSIS.md` Gap 2 |
 | Continuous batching + chunked prefill | yes (static chunk size) | yes (adaptive) | yes (adaptive) | `miniserve/scheduler.py` |
 | Prefix cache | radix, **block-granular** | hash/block | **token-granular** | 30-token prefix reuses 16 → `prefix_granularity.csv` |
 | CUDA-graph decode | bucketed, **CPU fallback measured only** | native | native | `cuda_graph_tradeoff.csv` (0.72–1.39x = noise) |
@@ -173,9 +174,13 @@ with the same model; see `docs/GAP_ANALYSIS.md` §"How to fill the `_TBD_` rows"
 
 ## What this engine does NOT do
 
-- **No Triton kernel, no FP8 GEMM, no tensor cores** in the shipped path.
-  `kernels/` is empty and `tests/test_triton_parity.py` is a stub.
-- **No split-K flash decoding**; decode is a Python-level PyTorch forward.
+- **No FP8 GEMM and no tensor-core matmul** in the shipped model path. The
+  Triton kernel uses `tl.dot` for its attention scores, but the projections
+  and the default decode path remain PyTorch SDPA.
+- **No GPU-verified Triton issue report**: the split-K kernel ships and its
+  algorithm is CPU-tested against SDPA, but this host has no CUDA device, so
+  the launch, autotune and RoPE paths are covered only by CUDA-gated tests
+  that skip here. No Triton latency number is claimed anywhere.
 - **No token-granular prefix reuse** — only whole 16-token blocks.
 - **No cross-node tensor parallelism**; single process, single device.
 - **No CUDA-verified numbers**: the CUDA-graph and NVML paths are structured
@@ -196,11 +201,17 @@ with the same model; see `docs/GAP_ANALYSIS.md` §"How to fill the `_TBD_` rows"
 | `v0.7` | Production-shaped server | `pytest tests/test_server.py -x -q` | ✅ |
 | `v0.8` | Overlap engine | `python bench/overlap_proof.py` | ✅ |
 | `v0.9` | CUDA-graph decode (Step A) | `pytest tests/test_cuda_graph.py -x -q` | ✅ |
-| `v0.9` | Triton v2 (Step B) | `pytest tests/test_triton_parity.py -x -q` | 🚧 |
+| `v0.9` | Triton v2 (Step B) | `pytest tests/test_triton_parity.py -x -q` | ✅ |
 | `v1.0` | Empirical benchmark suite | `python bench/regression_gate.py --baseline bench/data/baseline.csv` | ✅ |
 
-`v0.9` Step B (Triton split-K / tensor-core tiling / autotune / fused RoPE) is
-**not implemented**; the status row stays 🚧 until it is.
+`v0.9` Step B ships split-K flash decoding (`q_len == 1`), `tl.dot`
+tensor-core tiling (BLOCK_M=16 / BLOCK_N=64), a persisted autotune config
+space, and fused RoPE. The gate is green because the *algorithm* (split
+decomposition, log-sum-exp merge, masked paged gather, fused rotation) is
+parity-tested on CPU against SDPA; the Triton launch itself is tested only on
+CUDA and is reported as **skipped** on this CPU-only host, not as passing.
+Run `python kernels/tune.py` on a GPU to turn the declared autotune space
+into a measured one.
 
 ---
 
