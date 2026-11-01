@@ -92,7 +92,7 @@ class _TokenBucket:
             if self._tokens >= 1.0:
                 self._tokens -= 1.0
                 return True, 0.0
-            retry = (1.0 - self._tokens) / self._rate
+            retry = (1.0 - self._tokens) / self._rate if self._rate > 0 else 60.0
             return False, retry
 
 
@@ -129,22 +129,41 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 
 class _DedupEntry:
+    """One generation, fanned out to every joined subscriber.
+
+    Each subscriber gets its own queue seeded with the chunks already
+    produced, so a late joiner (or a second identical stream) receives the
+    full event sequence instead of racing a shared queue.
+    """
+
     def __init__(self) -> None:
         self.done = asyncio.Event()
         self.result: Optional[str] = None  # final text
-        self.chunks: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        self.history: list[Optional[str]] = []
+        self._queues: list[asyncio.Queue[Optional[str]]] = []
         self.subscribers: int = 1
 
-    async def stream(self) -> AsyncGenerator[str, None]:
+    def subscribe(self) -> "asyncio.Queue[Optional[str]]":
+        q: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        for item in self.history:
+            q.put_nowait(item)
+        if self.done.is_set():
+            q.put_nowait(None)
+        self._queues.append(q)
+        return q
+
+    async def stream(self, q: "asyncio.Queue[Optional[str]]") -> AsyncGenerator[str, None]:
         while True:
-            chunk = await self.chunks.get()
+            chunk = await q.get()
             if chunk is None:
                 break
             yield chunk
 
     def broadcast(self, chunk: Optional[str]) -> None:
-        # Put a copy into each subscriber's queue
-        self.chunks.put_nowait(chunk)
+        if chunk is not None:
+            self.history.append(chunk)
+        for q in self._queues:
+            q.put_nowait(chunk)
 
 
 _dedup_store: Dict[str, "_DedupEntry"] = {}
@@ -259,7 +278,7 @@ def create_app(
             # Join onto existing generation
             if req.stream:
                 async def _join_stream() -> AsyncGenerator[str, None]:
-                    async for chunk in entry.stream():
+                    async for chunk in entry.stream(entry.subscribe()):
                         yield chunk
                     yield sse_done()
                 headers = {"X-Deduplicated": "true"}
