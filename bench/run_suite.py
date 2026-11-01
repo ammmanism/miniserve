@@ -139,8 +139,9 @@ class PagedEngine:
     @torch.no_grad()
     def prefill(self, ids: List[int]) -> int:
         r = self.runner
+        table = self._table(ids)  # one table shared by every layer
         for state in r.layers:
-            state.block_table = self._table(ids)
+            state.block_table = table
         r.start = 0
         r.row_starts = None
         r._active = True
@@ -160,6 +161,8 @@ class PagedEngine:
 
     def run_point(self, n: int, isl: int, osl: int) -> dict:
         torch.manual_seed(SEED)
+        from miniserve.blocks import BlockManager
+        self.bm = BlockManager(self.runner.max_blocks, block_size=self.bs)
         t0 = time.perf_counter()
         tables: List[List[int]] = []
         ctx: List[int] = []
@@ -230,10 +233,24 @@ def emit_row(res: dict, cfg: dict) -> dict:
 def run_engine(args) -> None:
     from miniserve.model_runner import ModelRunner
 
-    runner = ModelRunner.load(args.model)
+    # 256 blocks = 4096 KV tokens: enough for the grid's largest point
+    # (4 x (1024 prompt + generation)), with headroom for one extra step.
+    runner = ModelRunner.load(args.model, max_blocks=256)
     eng = PagedEngine(runner, max_rows=max(32, args.concurrency))
     points = GRID if args.matrix else [(args.concurrency, args.isl, args.osl)]
     rows, roof = [], []
+    if args.append and (DATA / "all_results.csv").exists():
+        with (DATA / "all_results.csv").open(newline="") as f:
+            rows = [r for r in csv.DictReader(f)
+                    if not (r["concurrency"] == str(args.concurrency)
+                            and r["isl"] == str(args.isl)
+                            and r["osl"] == str(args.osl))]
+    if args.append and (DATA / "roofline.csv").exists():
+        with (DATA / "roofline.csv").open(newline="") as f:
+            roof = [r for r in csv.DictReader(f)
+                    if not (r["concurrency"] == str(args.concurrency)
+                            and r["isl"] == str(args.isl)
+                            and r["osl"] == str(args.osl))]
     for n, isl, osl in points:
         with PowerSampler() as ps:
             res = eng.run_point(n, isl, osl)
@@ -375,19 +392,54 @@ def run_microbench(args) -> None:
           f"in {time.perf_counter() - bench_t0:.1f}s")
 
 
+def run_prefix_granularity() -> None:
+    """Measure matched prefix length vs shared-prefix length (block granularity).
+
+    A radix cache can store token-granular keys, but the KV it hands back is
+    block-granular: only whole 16-token blocks can be reused.  This CSV
+    quantifies the tokens lost to that rounding -- the evidence behind the
+    GAP_ANALYSIS claim about sub-block shared prompts.
+    """
+    from miniserve.blocks import BlockManager
+    from miniserve.prefix_cache import RadixPrefixCache
+
+    bs = 16
+    bm = BlockManager(4096, block_size=bs)
+    cache = RadixPrefixCache(bm, block_size=bs)
+    base = [1000 + (i * 131 + 7) % 20000 for i in range(512)]
+    cache.insert(base, bm.allocate(len(base) // bs, "sys"))
+    rows = []
+    for shared in (8, 15, 16, 17, 30, 31, 32, 48, 64, 128):
+        matched, _ = cache.match(base[:shared])
+        rows.append({"shared_prefix_tokens": shared,
+                     "matched_tokens": matched,
+                     "wasted_tokens": shared - matched,
+                     "block_size": bs,
+                     "hardware": hardware()})
+        print(f"shared={shared:<4} matched={matched:<4} wasted={shared - matched}")
+    write_csv(DATA / "prefix_granularity.csv",
+              ["shared_prefix_tokens", "matched_tokens", "wasted_tokens",
+               "block_size", "hardware"], rows)
+    print(f"wrote {DATA / 'prefix_granularity.csv'} ({len(rows)} rows)")
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--concurrency", type=int, default=1)
     ap.add_argument("--isl", type=int, default=128)
     ap.add_argument("--osl", type=int, default=32)
     ap.add_argument("--matrix", action="store_true")
+    ap.add_argument("--append", action="store_true")
     ap.add_argument("--microbench", action="store_true")
+    ap.add_argument("--prefix-granularity", action="store_true")
     ap.add_argument("--url", default="")
     ap.add_argument("--model", default="Qwen/Qwen2.5-0.5B-Instruct")
     args = ap.parse_args()
     torch.manual_seed(SEED)
     if args.microbench:
         run_microbench(args)
+    elif args.prefix_granularity:
+        run_prefix_granularity()
     elif args.url:
         run_http(args)
     else:
