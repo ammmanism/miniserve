@@ -43,6 +43,13 @@ jobs:
         run: pip install -e ".[dev]" "transformers==5.13.0"
       - name: Run fast suite (blocks, prefix cache, scheduler, overlap, engine, server, triton, cuda graph)
         run: pytest tests/ -q --ignore tests/test_parity.py
+      - name: Benchmark artifacts smoke (gate, microbench, plots)
+        run: |
+          python bench/regression_gate.py --baseline bench/data/baseline.csv
+          python bench/run_suite.py --microbench
+          python bench/plot.py
+          test "$(ls bench/data/*.csv | wc -l)" -ge 10
+          test "$(ls bench/data/*.png | wc -l)" -ge 5
 
   parity-smoke:
     name: parity smoke vs HuggingFace (8 prompts)
