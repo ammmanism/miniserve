@@ -165,6 +165,9 @@ class PagedAttention:
         off = pos % self.block_size
         valid = pos[None, :] < lens[:, None]
         blk = torch.where(valid, blk, torch.zeros_like(blk))
+        if cache.dtype == torch.float8_e4m3fn:
+            # CPU has no index kernel for float8; gather the raw bytes.
+            return cache.view(torch.uint8)[blk, off].view(cache.dtype)
         return cache[blk, off]
 
     def forward(
