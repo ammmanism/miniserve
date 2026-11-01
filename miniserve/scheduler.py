@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, Optional
 
 from miniserve.blocks import BlockManager, OutOfBlocksError
+from miniserve.metrics import METRICS
 
 
 @dataclass
@@ -151,6 +152,8 @@ class Scheduler:
                     req.num_generated = 0
                     self._running[req.request_id] = req
                     self.queue_wait_ms.append((now - req.arrival_time) * 1000.0)
+                    METRICS.observe("miniserve_queue_wait_seconds",
+                                    (now - req.arrival_time))
                     self._stats["admissions"] += 1
                     ev["admitted"].append(req.request_id)
                     self._waiting.remove(req)
@@ -166,6 +169,8 @@ class Scheduler:
             self._running[req.request_id] = req
             req.state = "prefilling" if req.prefill_offset < len(req.prompt) else "decoding"
             self.queue_wait_ms.append((now - req.arrival_time) * 1000.0)
+            METRICS.observe("miniserve_queue_wait_seconds",
+                            (now - req.arrival_time))
             self._stats["admissions"] += 1
             self._waiting.remove(req)
 
@@ -243,6 +248,10 @@ class Scheduler:
                     executed += 1
 
         self.log.append(ev)
+        METRICS.gauge("miniserve_queue_depth", len(self._waiting))
+        METRICS.gauge("miniserve_running", len(self._running))
+        METRICS.counter("miniserve_tokens_total", len(ev["decoding"]),
+                        {"kind": "generated"})
         return ev
 
     def stats(self) -> dict:

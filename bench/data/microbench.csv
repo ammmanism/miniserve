@@ -1,0 +1,6 @@
+component,op,ops_per_sec,us_per_op,n,hardware
+block_manager,allocate+free,28699.6,34.844,2000,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+prefix_cache,match (cold),983671.1,1.017,500,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+prefix_cache,match (90% hit),56220.2,17.787,500,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+sampler,sample greedy,18.8,53270.971,100,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel
+scheduler,step (32 running),10648.5,93.909,200,cpu:Intel64 Family 6 Model 140 Stepping 1; GenuineIntel

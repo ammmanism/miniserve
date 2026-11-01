@@ -152,7 +152,9 @@ async def test_json_mode_bad_schema(app):
 
 @pytest.mark.asyncio
 async def test_rate_limit_burst_then_429():
-    app = create_app(rate_rps=10, rate_burst=5)
+    # rate_rps=0 disables refill: the burst/blocked split is deterministic
+    # regardless of how slow the host is at running eight sequential posts.
+    app = create_app(rate_rps=0, rate_burst=5)
     results: List[int] = []
     async with AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         for _ in range(8):

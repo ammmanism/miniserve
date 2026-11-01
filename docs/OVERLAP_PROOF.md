@@ -356,21 +356,32 @@ To keep the claim honest:
 ```bash
 git clone https://github.com/ammmanism/miniserve.git
 cd miniserve
-uv venv && source .venv/bin/activate
-uv sync --all-extras
-
+pip install -e ".[dev]"
 python bench/overlap_proof.py
-python -m bench.overlap_proof --summary
+pytest tests/test_overlap.py -x -q
 ```
 
-Expected on hardware matching [`REPRODUCE.md`](REPRODUCE.md):
+Committed output on the reference machine (4-core CPU, see
+[`REPRODUCE.md`](../REPRODUCE.md)) — these are the exact rows in
+[`bench/data/overlap_proof_v2.csv`](../bench/data/overlap_proof_v2.csv) and
+[`bench/data/overlap_with_chunked_prefill.csv`](../bench/data/overlap_with_chunked_prefill.csv):
 
 ```
-median(overlap_ratio):              0.62
-median(cpu_plan_ms):                8.1
-median(gpu_forward_ms):            13.1
-fraction(plan_before_forward):      0.94
+median overlap_ratio        = 0.142   (gate < 1)
+median sample_overlap_ratio = 1.000   (gate >= 0.5)
+prefill-during-forward frac = 0.492   (gate >= 0.3)
+TTFT chunked+overlap = 520.5 ms, sync = 437.6 ms
 ```
+
+Two honest notes on that block:
+
+- The latencies are **modeled sleeps** (`--forward-ms 20 --sample-ms 3`) on a
+  synthetic forward; this CSV proves the *scheduling overlap*, not kernel
+  speed. No GPU number is claimed.
+- On CPU, overlapped chunked prefill gives **worse** median TTFT than the
+  synchronous path (520.5 ms vs 437.6 ms) because the box is already
+  oversubscribed. That regression is published rather than hidden; the overlap
+  win is a GPU claim and remains `_TBD_` until a GPU run exists.
 
 If your hardware produces a different ratio, that is expected — forward time depends on GPU, plan time on CPU. **The claim is `median(overlap_ratio) < 1` on the hardware specified in `REPRODUCE.md`.** Anything else is a hardware difference, not a bug.
 

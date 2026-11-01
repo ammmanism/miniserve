@@ -26,6 +26,7 @@ from miniserve.protocol import (
     CompletionChoice, CompletionRequest, CompletionResponse,
     StreamChunk, StreamDelta, UsageInfo,
 )
+from miniserve.metrics import METRICS
 from miniserve.sampler import JSONLogitsProcessor, Sampler
 from miniserve.stream import SSEStream, sse_done, sse_event
 
@@ -91,7 +92,7 @@ class _TokenBucket:
             if self._tokens >= 1.0:
                 self._tokens -= 1.0
                 return True, 0.0
-            retry = (1.0 - self._tokens) / self._rate
+            retry = (1.0 - self._tokens) / self._rate if self._rate > 0 else 60.0
             return False, retry
 
 
@@ -128,22 +129,41 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 # ---------------------------------------------------------------------------
 
 class _DedupEntry:
+    """One generation, fanned out to every joined subscriber.
+
+    Each subscriber gets its own queue seeded with the chunks already
+    produced, so a late joiner (or a second identical stream) receives the
+    full event sequence instead of racing a shared queue.
+    """
+
     def __init__(self) -> None:
         self.done = asyncio.Event()
         self.result: Optional[str] = None  # final text
-        self.chunks: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        self.history: list[Optional[str]] = []
+        self._queues: list[asyncio.Queue[Optional[str]]] = []
         self.subscribers: int = 1
 
-    async def stream(self) -> AsyncGenerator[str, None]:
+    def subscribe(self) -> "asyncio.Queue[Optional[str]]":
+        q: asyncio.Queue[Optional[str]] = asyncio.Queue()
+        for item in self.history:
+            q.put_nowait(item)
+        if self.done.is_set():
+            q.put_nowait(None)
+        self._queues.append(q)
+        return q
+
+    async def stream(self, q: "asyncio.Queue[Optional[str]]") -> AsyncGenerator[str, None]:
         while True:
-            chunk = await self.chunks.get()
+            chunk = await q.get()
             if chunk is None:
                 break
             yield chunk
 
     def broadcast(self, chunk: Optional[str]) -> None:
-        # Put a copy into each subscriber's queue
-        self.chunks.put_nowait(chunk)
+        if chunk is not None:
+            self.history.append(chunk)
+        for q in self._queues:
+            q.put_nowait(chunk)
 
 
 _dedup_store: Dict[str, "_DedupEntry"] = {}
@@ -258,7 +278,7 @@ def create_app(
             # Join onto existing generation
             if req.stream:
                 async def _join_stream() -> AsyncGenerator[str, None]:
-                    async for chunk in entry.stream():
+                    async for chunk in entry.stream(entry.subscribe()):
                         yield chunk
                     yield sse_done()
                 headers = {"X-Deduplicated": "true"}
@@ -279,6 +299,7 @@ def create_app(
 
         # Primary generation
         _queue_depth += 1
+        t_req = time.perf_counter()
         try:
             _inflight += 1
             span_ctx = None
@@ -304,6 +325,13 @@ def create_app(
 
             entry.result = text
             entry.done.set()
+
+            n_tokens = len(text.split())
+            METRICS.observe("miniserve_ttft_seconds",
+                            time.perf_counter() - t_req)
+            METRICS.counter("miniserve_tokens_total", n_tokens,
+                            {"kind": "generated"})
+            METRICS.counter("miniserve_requests_total", 1, {"status": "ok"})
 
             if req.stream:
                 # Broadcast chunks to dedup subscribers
@@ -340,5 +368,11 @@ def create_app(
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok", "inflight": _inflight, "queue": _queue_depth}
+
+    @app.get("/metrics")
+    async def metrics_endpoint() -> Response:
+        """Prometheus exposition: HTTP layer + scheduler-batching series."""
+        return Response(content=METRICS.render(),
+                        media_type="text/plain; version=0.0.4; charset=utf-8")
 
     return app
