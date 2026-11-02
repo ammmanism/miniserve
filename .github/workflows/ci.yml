@@ -197,12 +197,15 @@ jobs:
           name: sbom.spdx.json
           path: sbom.spdx.json
       # Grype reads .grype.yaml (issue-#12 waivers) from the checkout root.
+      # Pin grype to v0.85.0 — the waiver file's fix-state enum (fixed/unknown)
+      # was validated against this exact version. Newer grype may change schema.
       - name: Grype vulnerability scan on the SBOM (fail on high)
         uses: anchore/scan-action@v7
         with:
           sbom: sbom.spdx.json
           severity-cutoff: high
           fail-build: true
+          grype-version: '0.85.0'
 
   # --------------------------------------------------------------------------
   # Performance regression gate: c=4 / ISL=512 / OSL=64 smoke vs the committed
