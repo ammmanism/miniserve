@@ -1,0 +1,32 @@
+version: 2
+updates:
+  # Python runtime + dev dependencies (pinned exact in pyproject.toml)
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    target-branch: "main"
+    # Exact pins in pyproject.toml — Dependabot bumps them in lock-step,
+    # never to a floating version (AGENTS.md rule 9).
+    versioning-strategy: "increase"
+    groups:
+      python-deps:
+        patterns:
+          - "*"
+    reviewers:
+      - "ammmanism"
+
+  # GitHub Actions (workflows + reusable action pins)
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+    target-branch: "main"
+    groups:
+      actions:
+        patterns:
+          - "*"
+    reviewers:
+      - "ammmanism"

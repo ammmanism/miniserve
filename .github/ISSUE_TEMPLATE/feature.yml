@@ -1,0 +1,51 @@
+name: Feature request
+description: Add a capability to miniserve (engine, serving, or tooling).
+labels: ["feature", "needs-scoping"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Constraint from AGENTS.md:** one feature = one branch = one PR,
+        ≤ 200 lines of new code, one core file max. Features that exceed
+        any of those limits should be split into stages — pitch the first
+        stage here and list follow-ups.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem it solves
+      description: What user-environment gap does this close? Link the
+        failing test or the `_TBD_` cell it enables.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed shape
+      description: Function/class signatures, file(s) to touch (one core file
+        max per AGENTS.md), and the interface contract.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How we prove it works
+      description: Which test file will gain a test, and what the pass
+        criteria are. If this is a perf claim, name the `bench/data/*.csv`
+        it will land in (rule 1 — no CSV, no claim).
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: limits
+    attributes:
+      label: Scope acknowledgment
+      options:
+        - label: "≤ 200 lines of new code"
+          required: true
+        - label: "touches at most one core file (no coupled-file pair edits)"
+          required: true
+        - label: "comes with a test (or an explicit gate change)"
+          required: true

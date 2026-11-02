@@ -73,3 +73,148 @@ jobs:
         run: pip install -e ".[dev]" "transformers==5.13.0"
       - name: Greedy parity vs HuggingFace
         run: pytest tests/test_parity.py -q
+
+  # --------------------------------------------------------------------------
+  # Matrix: os × python × torch. CPU-only wheel installs; triton is optional
+  # at runtime (guarded import) so macOS cells install without it.
+  # --------------------------------------------------------------------------
+  matrix:
+    name: py${{ matrix.python }} / torch${{ matrix.torch }} / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    env:
+      MINISERVE_PARITY_PROMPTS: "8"
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        python: ["3.10", "3.11", "3.12"]
+        torch: ["2.3.1", "2.4.0", "2.5.0"]
+        exclude:
+          # torch compatibility is exercised across Linux for all versions;
+          # macOS runs the floor version only (runner-time budget).
+          - os: macos-latest
+            torch: "2.4.0"
+          - os: macos-latest
+            torch: "2.5.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+      - name: Cache HuggingFace weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen2.5-0.5b-instruct
+      - name: Install project (no deps yet — matrix torch is installed after)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]" "transformers==5.13.0"
+      # torch is installed LAST so the matrix version wins over the project
+      # pin (torch==2.5.1 stays the released-verified default outside CI).
+      - name: Downgrade torch to matrix version (CPU wheel)
+        run: |
+          pip install torch==${{ matrix.torch }} --index-url https://download.pytorch.org/whl/cpu
+          if [[ "${{ matrix.torch }}" == "2.3.1" ]]; then
+            # torch 2.3 wheels predate numpy 2.0; use the concurrent numpy 1.x.
+            pip install "numpy>=1.24,<2"
+          fi
+      - name: Run fast suite (excl. long HF grid; that is the parity job)
+        run: pytest -m "not gpu and not slow" -x -q
+
+  # --------------------------------------------------------------------------
+  # Supply-chain: dependency audit (pip-audit), SBOM (syft → SPDX), vuln scan
+  # (grype, fail on high). Runs once per PR on ubuntu.
+  # --------------------------------------------------------------------------
+  supply-chain:
+    name: pip-audit + syft SBOM + grype
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install CPU-only torch first (small wheel)
+        run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install project + dev extras (includes pip-audit pin)
+        run: pip install -e ".[dev]"
+      # Waived IDs are a scoped, dated allowance for known-vulnerable pins
+      # (torch 2.5.1, starlette 0.41.3, pytest dev-only). Every entry maps to
+      # a fix-version tracked in the bump issue. No NEW waivers without a
+      # linked issue: https://github.com/ammmanism/miniserve/issues/12
+      - name: pip-audit (dependency vulnerability scan, waivers per issue #12)
+        run: >-
+          pip-audit --skip-editable
+          --ignore-vuln PYSEC-2026-1845
+          --ignore-vuln PYSEC-2026-161
+          --ignore-vuln PYSEC-2026-249
+          --ignore-vuln PYSEC-2026-248
+          --ignore-vuln PYSEC-2026-1942
+          --ignore-vuln PYSEC-2026-1941
+          --ignore-vuln PYSEC-2026-2281
+          --ignore-vuln PYSEC-2026-2280
+          --ignore-vuln PYSEC-2025-41
+          --ignore-vuln PYSEC-2025-205
+          --ignore-vuln PYSEC-2025-206
+          --ignore-vuln PYSEC-2025-207
+          --ignore-vuln PYSEC-2025-204
+          --ignore-vuln PYSEC-2026-139
+          --ignore-vuln PYSEC-2025-209
+          --ignore-vuln PYSEC-2025-208
+          --ignore-vuln PYSEC-2025-191
+          --ignore-vuln PYSEC-2025-198
+          --ignore-vuln PYSEC-2025-203
+          --ignore-vuln PYSEC-2026-1970
+          --ignore-vuln PYSEC-2026-2286
+          --ignore-vuln GHSA-c678-jfcj-6jmf
+          --ignore-vuln GHSA-x3gm-94wq-g975
+          --ignore-vuln GHSA-f4hp-rmr7-r7v8
+          --ignore-vuln GHSA-vgrw-7cvw-pwgx
+          --ignore-vuln GHSA-rrmf-rvhw-rf47
+          --ignore-vuln GHSA-qfhq-4f3w-5fph
+      - name: SBOM (SPDX JSON via syft) — uploaded as artifact
+        uses: anchore/sbom-action@v0
+        with:
+          format: spdx-json
+          artifact-name: sbom.spdx.json
+          upload-artifact: true
+      # Grype reads .grype.yaml (issue-#12 waivers) from the checkout root.
+      - name: Grype vulnerability scan on the SBOM (fail on high)
+        uses: anchore/scan-action@v5
+        with:
+          sbom: sbom.spdx.json
+          severity-cutoff: high
+          fail-build: true
+
+  # --------------------------------------------------------------------------
+  # Performance regression gate: c=4 / ISL=512 / OSL=64 smoke vs the committed
+  # baseline. >5% throughput or >10% P99 TTFT/ITL regression fails the PR.
+  # ubuntu only; main branch only (push to main or PR targeting main).
+  # --------------------------------------------------------------------------
+  perf-gate:
+    name: perf regression gate (c=4 / isl=512 / osl=64)
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && github.base_ref == 'main')
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Cache HuggingFace weights
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: hf-qwen2.5-0.5b-instruct
+      - name: Install CPU-only torch first (small wheel)
+        run: pip install torch==2.5.1 --index-url https://download.pytorch.org/whl/cpu
+      - name: Install project + transformers
+        run: pip install -e ".[dev]" "transformers==5.13.0"
+      - name: c=4 smoke suite
+        run: python bench/run_suite.py --concurrency 4 --isl 512 --osl 64
+      - name: Regression gate vs committed baseline
+        run: python bench/regression_gate.py --baseline bench/data/baseline.csv

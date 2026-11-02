@@ -8,11 +8,17 @@
 
 <br/>
 
-[![CI](https://github.com/ammmanism/miniserve/actions/workflows/ci.yml/badge.svg?style=for-the-badge)](https://github.com/ammmanism/miniserve/actions/workflows/ci.yml)
-[![Regression gate](https://img.shields.io/badge/regression%20gate-CI--checked-2bb673?style=for-the-badge)](bench/regression_gate.py)
-[![PyTorch](https://img.shields.io/badge/PyTorch-2.5.1-EE4C2C?style=for-the-badge&logo=pytorch&logoColor=white)](https://pytorch.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.115-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![License](https://img.shields.io/badge/License-Apache--2.0-F59E0B?style=for-the-badge)](LICENSE)
+<!-- Elite badge wall: CI matrix, signed supply chain, parity gate. -->
+[![CI](https://github.com/ammmanism/miniserve/actions/workflows/ci.yml/badge.svg)](https://github.com/ammmanism/miniserve/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/ammmanism/miniserve)](https://github.com/ammmanism/miniserve/releases)
+[![SLSA 3](https://slsa.dev/images/gh-badge-level3.svg)](https://slsa.dev)
+[![Sigstore](https://img.shields.io/badge/signed-sigstore-4c1)](https://www.sigstore.dev/)
+[![Parity](https://img.shields.io/badge/greedy_parity-200%2F200-brightgreen)](bench/data/parity_report.csv)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Perf gate](https://img.shields.io/badge/perf_regression_gate-passing-brightgreen)](bench/regression_gate.py)
+[![Security](https://img.shields.io/badge/policy-90d_coordinated-purple)](SECURITY.md)
+
+<br/>
 
 <br/>
 
@@ -237,6 +243,8 @@ python bench/regression_gate.py --baseline bench/data/baseline.csv
 
 # server + live metrics (stub generator)
 uvicorn miniserve.server:create_app --factory --port 8000
+# or, from a `pip install miniserve` env (v1.0.0+):
+#   miniserve --host 0.0.0.0 --port 8000
 curl -s localhost:8000/metrics | grep miniserve_ttft_seconds_bucket
 ```
 

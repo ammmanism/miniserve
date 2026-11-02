@@ -1,0 +1,22 @@
+# Ownership — CODEOWNERS
+# star README: last approved reviewer wins on conflicts.
+
+*                                   @ammmanism
+
+/bench/                             @ammmanism
+/docs/                              @ammmanism
+/miniserve/                         @ammmanism
+/kernels/                           @ammmanism
+/tests/                             @ammmanism
+
+# Phase 11 — release / supply chain / CI
+/.github/release.yml                @ammmanism
+/.github/workflows/ci.yml           @ammmanism
+/.github/workflows/release.yml      @ammmanism
+/.github/workflows/codeql.yml       @ammmanism
+/.github/workflows/docs.yml         @ammmanism
+/SECURITY.md                        @ammmanism
+/CONTRIBUTING.md                    @ammmanism
+/CHANGELOG.md                       @ammmanism
+/flake.nix                          @ammmanism
+/pyproject.toml                     @ammmanism

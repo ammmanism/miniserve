@@ -8,6 +8,7 @@ build/
 .venv/
 venv/
 *.lock
+!uv.lock
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/

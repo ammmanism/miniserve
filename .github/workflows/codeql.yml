@@ -1,0 +1,60 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1"   # weekly, Mondays 06:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: CodeQL (${{ matrix.language }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      security-events: write
+      packages: read
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Python: engine, kernels (Triton), bench, tests.
+          - language: python
+            os: ubuntu-latest
+          # C/C++ (+ .cu) scanning is wired for the kernels — the repo has
+          # no native sources yet (only .py), so the step below detects
+          # that and short-circuits instead of failing on an empty corpus.
+          - language: c-cpp
+            os: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Skip C/C++ when the repo has no native sources
+        if: matrix.language == 'c-cpp'
+        id: cpp_prescan
+        run: |
+          if find . -type f \( -name '*.c' -o -name '*.cc' -o -name '*.cpp' -o -name '*.h' -o -name '*.hpp' -o -name '*.cu' \) | grep -q .; then
+            echo "cpp=scan" >> "$GITHUB_OUTPUT"
+          else
+            echo "cpp=skip" >> "$GITHUB_OUTPUT"
+            echo "No C/C++/CUDA sources in the repo — codeql c-cpp short-circuits."
+          fi
+
+      - uses: github/codeql-action/init@v3
+        if: matrix.language != 'c-cpp' || steps.cpp_prescan.outputs.cpp == 'scan'
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: none
+      - uses: github/codeql-action/bundle@v3
+        if: matrix.language != 'c-cpp' || steps.cpp_prescan.outputs.cpp == 'scan'
+      - name: Perform CodeQL analysis
+        uses: github/codeql-action/analyze@v3
+        if: matrix.language != 'c-cpp' || steps.cpp_prescan.outputs.cpp == 'scan'
+        with:
+          category: "/language:${{ matrix.language }}"
