@@ -206,6 +206,7 @@ jobs:
           severity-cutoff: high
           fail-build: true
           grype-version: '0.85.0'
+          grype-version: '0.85.0'
 
   # --------------------------------------------------------------------------
   # Performance regression gate: c=4 / ISL=512 / OSL=64 smoke vs the committed
