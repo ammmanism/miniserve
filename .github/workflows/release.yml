@@ -48,20 +48,20 @@ jobs:
             cibw_arch: arm64
             artifact: wheels-macos-arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Set up QEMU (linux-aarch64 emulation)
         if: matrix.cibw_arch == 'aarch64'
-        uses: docker/setup-qemu-action@v3
+        uses: docker/setup-qemu-action@v4
         with:
           platforms: arm64
       - name: Build wheels (cibuildwheel, cp311)
-        uses: pypa/cibuildwheel@v2.21.2
+        uses: pypa/cibuildwheel@v4.3.5
         env:
           CIBW_BUILD: "cp311-*"
           CIBW_ARCHS: ${{ matrix.cibw_arch }}
           CIBW_TEST_COMMAND: 'python -c "import miniserve, kernels"'
       - name: Upload wheel artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.artifact }}
           path: wheelhouse/*.whl
@@ -101,7 +101,7 @@ jobs:
       contents: read
     steps:
       - name: Download wheels (one subdir per platform)
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           pattern: wheels-*
           path: wheels/
@@ -124,7 +124,7 @@ jobs:
           find wheels -name '*.whl' | sort
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3.7.0
+        uses: sigstore/cosign-installer@v4.1.2
       - name: Sign each wheel (keyless Sigstore signature + certificate)
         shell: bash
         run: |
@@ -165,7 +165,7 @@ jobs:
           cp wheels/*/*.whl wheels/*/*.sig wheels/*/*.pem dist/ 2>/dev/null || true
           cp sbom.spdx.json sbom.cyclonedx.json SHA256SUMS.txt dist/
       - name: Upload release assets artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-assets
           path: dist/*
@@ -184,7 +184,7 @@ jobs:
       contents: write
     steps:
       - name: Download release assets
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-assets
           path: release-assets
@@ -202,7 +202,7 @@ jobs:
           echo "cosign signatures: $n_sigs/$n_wheels wheels"
 
       - name: Create / update GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: release-assets/*
