@@ -48,8 +48,16 @@ def _paged_attention_forward(
     """Drop-in HF attention forward: identical math, paged KV cache."""
     runner: "ModelRunner" = self._paged_runner
     if not runner._active:  # HuggingFace reference path (own cache, ground truth)
-        return self._hf_forward(hidden_states, position_embeddings,
-                                attention_mask, past_key_values, **kwargs)
+        # transformers 4.x and 5.x use different positional layouts for the
+        # attention forward (4.x: attention_mask first, past_key_value
+        # singular). Forward everything by keyword — kwargs already carries
+        # what the installed version passes — so both APIs work unchanged.
+        hf_kwargs = dict(kwargs)
+        hf_kwargs.setdefault("position_embeddings", position_embeddings)
+        hf_kwargs.setdefault("attention_mask", attention_mask)
+        if "past_key_value" not in hf_kwargs and "past_key_values" not in hf_kwargs:
+            hf_kwargs["past_key_values"] = past_key_values
+        return self._hf_forward(hidden_states, **hf_kwargs)
     from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
 
     batch, seq, _ = hidden_states.shape

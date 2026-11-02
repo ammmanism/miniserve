@@ -183,8 +183,12 @@ jobs:
           --ignore-vuln GHSA-qfhq-4f3w-5fph
       # sbom-action uploads artifacts only; grype needs a file on disk, so we
       # install the syft binary and write the SPDX JSON ourselves.
+      # The nested syft installer action referenced here previously does not
+      # exist on anchore/sbom-action; install the CLI directly instead.
       - name: Install syft binary
-        uses: anchore/sbom-action/action/syft@v0
+        run: >-
+          curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh
+          | sh -s -- -b /usr/local/bin
       - name: Generate SPDX SBOM on disk
         run: syft dir:. -o spdx-json=sbom.spdx.json
       - name: Upload SBOM artifact
