@@ -1,0 +1,66 @@
+name: Docs
+
+# Builds the MkDocs site (existing docs/*.md + README as the index) and
+# publishes it to the gh-pages branch so GitHub Pages serves it.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-deploy:
+    name: mkdocs → GitHub Pages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # gh-pages history for mkdocs gh-deploy
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install mkdocs + material theme (exact pins)
+        run: pip install mkdocs==1.6.1 mkdocs-material==9.5.44
+
+      - name: Scaffold site config (staged dir + nav of existing docs)
+        run: |
+          cat > mkdocs.yml <<'EOF'
+          site_name: miniserve
+          repo_url: https://github.com/ammmanism/miniserve
+          repo_name: ammmanism/miniserve
+          docs_dir: site_src
+          theme:
+            name: material
+            features:
+              - navigation.footer
+              - content.code.copy
+          nav:
+            - Home: index.md
+            - Reproduce: REPRODUCE.md
+            - Architecture: ARCHITECTURE.md
+            - Capacity / SLO math: CAPACITY.md
+            - Decisions: DECISIONS.md
+            - Gap analysis: GAP_ANALYSIS.md
+            - Overlap proof: OVERLAP_PROOF.md
+          markdown_extensions:
+            - toc:
+                permalink: true
+            - admonition
+          EOF
+
+      - name: Stage docs (README becomes the index page)
+        run: |
+          mkdir -p site_src
+          cp docs/*.md site_src/
+          cp README.md site_src/index.md
+
+      - name: Build (strict — stale nav links fail the job)
+        run: mkdocs build --strict --site-dir _site
+
+      - name: Deploy to gh-pages
+        run: mkdocs gh-deploy --force --message "docs deploy [skip ci]"

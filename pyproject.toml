@@ -1,14 +1,17 @@
 [project]
 name = "miniserve"
-version = "0.1.0"
+version = "1.0.0"
 description = "Minimal LLM serving engine — correctness first, speed second."
 readme = "README.md"
 requires-python = ">=3.10"
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
 
 dependencies = [
     "torch==2.5.1",
-    "triton==3.1.0",
+    # triton ships CUDA/ROCm wheels only — the engine imports it behind a
+    # guard (kernels/paged_attn_triton.py), so it is not required on
+    # Windows/macOS (CPU-only) environments.
+    "triton==3.1.0; platform_system == 'Linux'",
     "fastapi==0.115.5",
     "uvicorn[standard]==0.32.1",
     "pydantic>=2.0.0,==2.10.2",
@@ -19,10 +22,15 @@ dependencies = [
     "httpx==0.28.0",
 ]
 
+[project.scripts]
+miniserve = "miniserve.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest==8.3.3",
     "pytest-asyncio==0.24.0",
+    "transformers==5.13.0",
+    "pip-audit==2.7.3",
 ]
 otel = [
     "opentelemetry-sdk>=1.43.0",
@@ -33,6 +41,15 @@ otel = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
+[tool.hatch.build.targets.wheel]
+# kernels/ is an importable package (triton flash decode) and must ship in
+# the wheel next to miniserve/.
+packages = ["miniserve", "kernels"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+markers = [
+    "gpu: requires a CUDA device (auto-skipped on CPU-only runners)",
+    "slow: long-running tests excluded from the CI matrix fast pass",
+]

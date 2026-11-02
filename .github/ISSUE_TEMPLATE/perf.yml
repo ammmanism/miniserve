@@ -1,0 +1,83 @@
+name: Performance report
+description: A measured delta in throughput, TTFT, ITL, or capacity.
+labels: ["perf"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Rule 1 (no CSV, no claim).** A perf report without real numbers
+        produced by `bench/run_suite.py` (and the exact command) is
+        closed as invalid. Patch against `bench/data/baseline.csv`:
+        the PR checklist auto-runs `bench/regression_gate.py`.
+
+  - type: dropdown
+    id: metric
+    attributes:
+      label: Metric
+      options:
+        - throughput (tok/s)
+        - TTFT (ms / P99)
+        - ITL (ms / P99)
+        - SLO capacity (rqtt)
+        - GPU memory (GB)
+        - scheduler latency (ms)
+        - prefill-vs-decode overlap ratio
+        - other (describe)
+    validations:
+      required: true
+
+  - type: textarea
+    id: numbers
+    attributes:
+      label: Measured numbers
+      description: Paste the relevant rows of the CSV produced by your
+        run, and the exact `bench/run_suite.py` invocation.
+      placeholder: |
+        $ python bench/run_suite.py --concurrency 4 --isl 512 --osl 64
+        ...paste the printed table or attach the CSV...
+    validations:
+      required: true
+
+  - type: input
+    id: baseline-csv
+    attributes:
+      label: Baseline CSV
+      description: Which committed CSV did you compare against?
+      placeholder: bench/data/all_results.csv (commit SHA)
+    validations:
+      required: true
+
+  - type: dropdown
+    id: regression-or-improvement
+    attributes:
+      label: Direction
+      options:
+        - Regression (slower than baseline)
+        - Improvement (faster than baseline)
+        - Anomaly (unexpected shape / spikes)
+        - New measurement (no prior number existed)
+    validations:
+      required: true
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware + software config
+      description: EXACT hardware, CUDA, torch, dtype, and workload (ISL/OSL)
+        constants. Without these the number is not reproducible and will
+        not be accepted into `bench/data/`.
+      placeholder: |
+        - CPU (model, cores, freq governor)
+        - GPU (name, VRAM, driver, CUDA)  -- or "no GPU, CPU only"
+        - torch version, dtype, batch c=, ISL/OSL
+    validations:
+      required: true
+
+  - type: textarea
+    id: attach
+    attributes:
+      label: Attach the raw CSV / trace
+      description: Paste the full CSV (or link to a gist). It must be
+        attachable to `bench/data/` (rule 1 applies to the PR that lands).
+    validations:
+      required: true

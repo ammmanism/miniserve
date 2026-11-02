@@ -48,8 +48,16 @@ def _paged_attention_forward(
     """Drop-in HF attention forward: identical math, paged KV cache."""
     runner: "ModelRunner" = self._paged_runner
     if not runner._active:  # HuggingFace reference path (own cache, ground truth)
-        return self._hf_forward(hidden_states, position_embeddings,
-                                attention_mask, past_key_values, **kwargs)
+        # transformers 4.x and 5.x use different positional layouts for the
+        # attention forward (4.x: attention_mask first, past_key_value
+        # singular). Forward everything by keyword — kwargs already carries
+        # what the installed version passes — so both APIs work unchanged.
+        hf_kwargs = dict(kwargs)
+        hf_kwargs.setdefault("position_embeddings", position_embeddings)
+        hf_kwargs.setdefault("attention_mask", attention_mask)
+        if "past_key_value" not in hf_kwargs and "past_key_values" not in hf_kwargs:
+            hf_kwargs["past_key_values"] = past_key_values
+        return self._hf_forward(hidden_states, **hf_kwargs)
     from transformers.models.qwen2.modeling_qwen2 import apply_rotary_pos_emb
 
     batch, seq, _ = hidden_states.shape
@@ -124,12 +132,18 @@ class ModelRunner:
     def load(cls, model_name: str = DEFAULT_MODEL, quantize: str = "none",
              dtype: torch.dtype = torch.float32, **kwargs):
         """Load tokenizer + weights; ``quantize`` is "none" or "int8"."""
+        import transformers
         from transformers import AutoModelForCausalLM, AutoTokenizer
 
         if quantize not in ("none", "int8"):
             raise ValueError(f"unknown quantize: {quantize}")
         tokenizer = AutoTokenizer.from_pretrained(model_name, padding_side="left")
-        model = AutoModelForCausalLM.from_pretrained(model_name, dtype=dtype, low_cpu_mem_usage=True)
+        # transformers >= 5 renamed torch_dtype -> dtype; 4.x (required for
+        # torch 2.3) still expects torch_dtype. Pick the kwarg the installed
+        # version understands so the CI floor cell loads without TypeError.
+        dtype_kw = "dtype" if int(transformers.__version__.split(".")[0]) >= 5 else "torch_dtype"
+        model = AutoModelForCausalLM.from_pretrained(
+            model_name, **{dtype_kw: dtype}, low_cpu_mem_usage=True)
         if quantize == "int8":
             # lm_head stays in fp32 (standard recipe): it is a 152k-vocab
             # output head; quantizing it distorts logits far beyond any

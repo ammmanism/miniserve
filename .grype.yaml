@@ -1,0 +1,155 @@
+# Grype configuration — phase-11 audit waivers.
+#
+# These are NOT "the scan is wrong" waivers; they are a scoped, dated
+# allowance for known-vulnerable pinned runtime deps, tracked for removal
+# in https://github.com/ammmanism/miniserve/issues/12.
+#
+#   - torch 2.5.1:      al advisories are fixed in torch >= 2.13.0 (or are
+#                       local-attack-only with no fixed version yet); the bump
+#                       requires a fresh committed parity + benchmark pass.
+#   - starlette 0.41.3: fixed at starlette >= 1.3.1; requires the fastapi bump.
+#   - pytest 8.3.3:     dev-only dependency, never shipped in the wheel.
+#
+# Remove entries as the bumps land. No NEW waivers without a linked issue.
+
+ignore:
+  # --- torch 2.5.1 (fix requires >= 2.13.0; see issue #12) ---
+  - vulnerability: "CVE-2025-32434"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-55553"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-55554"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-55557"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-55552"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2026-4538"
+    fix-state: unknown
+    justification: "torch 2.5.1 pin; no fixed release; update in issue #12"
+  - vulnerability: "CVE-2025-55560"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-55558"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-2953"
+    fix-state: unknown
+    justification: "torch 2.5.1 pin; no fixed release; update in issue #12"
+  - vulnerability: "CVE-2025-46148"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-55551"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-3730"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2026-24747"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-2148"
+    fix-state: unknown
+    justification: "torch 2.5.1 pin; no fixed release; update in issue #12"
+  - vulnerability: "CVE-2025-2149"
+    fix-state: unknown
+    justification: "torch 2.5.1 pin; no fixed release; update in issue #12"
+  - vulnerability: "CVE-2025-2998"
+    fix-state: unknown
+    justification: "torch 2.5.1 pin; no fixed release; update in issue #12"
+  - vulnerability: "CVE-2025-2999"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-3000"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-3001"
+    fix-state: known-fixed
+    justification: "torch 2.5.1 pin; bump tracked in issue #12"
+  - vulnerability: "GHSA-c678-jfcj-6jmf"
+    fix-state: unknown
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-x3gm-94wq-g975"
+    fix-state: unknown
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-f4hp-rmr7-r7v8"
+    fix-state: unknown
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-vgrw-7cvw-pwgx"
+    fix-state: known-fixed
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-rrmf-rvhw-rf47"
+    fix-state: known-fixed
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-qfhq-4f3w-5fph"
+    fix-state: known-fixed
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-53q9-r3pm-6pq6"
+    fix-state: known-fixed
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-3749-ghw9-m3mg"
+    fix-state: unknown
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-887c-mr87-cxwp"
+    fix-state: known-fixed
+    justification: "torch 2.5.1; see issue #12"
+  - vulnerability: "GHSA-63cw-57p8-fm3p"
+    fix-state: known-fixed
+    justification: "torch 2.5.1; see issue #12"
+
+  # --- starlette 0.41.3 (fix requires >= 1.3.1) ---
+  - vulnerability: "CVE-2026-48710"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2026-54283"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2026-54282"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-62727"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2025-54121"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2026-48818"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "CVE-2026-48817"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3 pin; bump tracked in issue #12"
+  - vulnerability: "GHSA-86qp-5c8j-p5mr"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+  - vulnerability: "GHSA-82w8-qh3p-5jfq"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+  - vulnerability: "GHSA-jp82-jpqv-5vv3"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+  - vulnerability: "GHSA-7f5h-v6xp-fcq8"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+  - vulnerability: "GHSA-2c2j-9gv5-cj73"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+  - vulnerability: "GHSA-wqp7-x3pw-xc5r"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+  - vulnerability: "GHSA-x746-7m8f-x49c"
+    fix-state: known-fixed
+    justification: "starlette 0.41.3; see issue #12"
+
+  # --- pytest 8.3.3 (dev-only, never shipped) ---
+  - vulnerability: "CVE-2025-71176"
+    fix-state: known-fixed
+    justification: "dev-only test dep, not in shipped wheel; issue #12"
+  - vulnerability: "GHSA-6w46-j5rx-g56g"
+    fix-state: known-fixed
+    justification: "dev-only test dep, not in shipped wheel; issue #12"

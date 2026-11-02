@@ -1,0 +1,79 @@
+name: Bug report
+description: Something in miniserve is broken or diverges from its spec.
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Before filing:** read `README.md` and `docs/ARCHITECTURE.md`.
+        A red CI badge is not a bug report — it is a bug report *with* the
+        failing run's paste attached.
+
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      description: Which module misbehaves?
+      options:
+        - miniserve/blocks.py (paged KV cache)
+        - miniserve/prefix_cache.py (radix prefix reuse)
+        - miniserve/scheduler.py (continuous batching)
+        - miniserve/overlap.py (overlap scheduler)
+        - miniserve/model_runner.py (paged attention / CUDA graph)
+        - kernels/paged_attn_triton.py (Triton flash decode)
+        - miniserve/server.py (HTTP API / SSE / dedup / rate limit)
+        - miniserve/sampler.py (grammar JSON / logits hook)
+        - bench/ (suite, regression gate, capacity planner)
+        - CI / release / supply chain (workflows, SLSA, SBOM, signing)
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+      description: Paste command output — no paraphrase. Include the pytest
+        summary line verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: Which invariant is wrong? Be specific (test name, CSV row,
+        README claim).
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      placeholder: |
+        git rev-parse HEAD
+        python -c "import miniserve; print(miniserve.__file__)"
+        pytest <file>:<test> -x -q   # full real output
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version / commit
+      placeholder: v1.0.0 or a SHA from `git rev-parse HEAD`
+    validations:
+      required: true
+
+  - type: textarea
+    id: env
+    attributes:
+      label: Environment
+      placeholder: |
+        - OS + version
+        - Python version
+        - torch version (exact pip pin)
+        - GPU: yes/no (CUDA version if yes)
+        - `nix develop` shell / uv sync / repo Dockerfile
+    validations:
+      required: true

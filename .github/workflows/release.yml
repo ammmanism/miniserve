@@ -1,0 +1,208 @@
+name: Release
+
+# Shipped on every pushed v* tag:
+#   1. multi-platform wheels (linux-x86_64, linux-aarch64 via QEMU, macOS-arm64)
+#   2. SLSA Build Level 3 provenance via the trusted slsa-github-generator
+#      (generic generator — the Go builder variant cannot attest Python wheels)
+#   3. Sigstore keyless signing (cosign sign-blob) for every artifact
+#   4. SBOM (SPDX + CycloneDX via syft), SHA256SUMS.txt
+#   5. everything uploaded to the GitHub Release
+#
+# Honesty note: all wheels are pure-Python today (kernels/*.py + a JSON
+# config), so the three platform wheels are byte-identical and get deduped
+# before signing/release. The matrix stays — compiled kernel extensions
+# (CUDA C++ / packaged Triton kernels) will slot into the same pipeline.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions: {}
+
+env:
+  # MUST be an exact vX.Y.Z for slsa-verifier to accept the provenance.
+  SLSA_GENERATOR_VERSION: "v2.1.0"
+
+jobs:
+  # -------------------------------------------------------------------------
+  # 1. Build wheels in isolated environments.
+  # -------------------------------------------------------------------------
+  build:
+    name: wheels (${{ matrix.os }} / ${{ matrix.cibw_arch }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            cibw_arch: x86_64
+            artifact: wheels-linux-x86_64
+          - os: ubuntu-latest
+            cibw_arch: aarch64
+            artifact: wheels-linux-aarch64
+          - os: macos-14   # arm64 runner
+            cibw_arch: arm64
+            artifact: wheels-macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up QEMU (linux-aarch64 emulation)
+        if: matrix.cibw_arch == 'aarch64'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+      - name: Build wheels (cibuildwheel, cp311)
+        uses: pypa/cibuildwheel@v2.21.2
+        env:
+          CIBW_BUILD: "cp311-*"
+          CIBW_ARCHS: ${{ matrix.cibw_arch }}
+          CIBW_TEST_COMMAND: 'python -c "import miniserve, kernels"'
+      - name: Upload wheel artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 5
+      - name: Generate hashes for provenance subjects
+        id: hash
+        shell: bash
+        run: |
+          cd wheelhouse
+          echo "hashes=$(sha256sum * | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  # -------------------------------------------------------------------------
+  # 2. SLSA Build L3 provenance, generated in the trusted, isolated runner.
+  #    upload-assets: true → provenance (.intoto.jsonl) lands on the release.
+  # -------------------------------------------------------------------------
+  provenance:
+    needs: [build]
+    permissions:
+      actions: read     # detect the GitHub Actions environment
+      id-token: write   # sign the provenance
+      contents: write   # upload to the release
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.build.outputs.hashes }}"
+      upload-assets: true
+
+  # -------------------------------------------------------------------------
+  # 3. Sign every artifact (Sigstore keyless), generate SBOMs + checksums.
+  #    Byte-identical wheels from the platform matrix are deduped first.
+  # -------------------------------------------------------------------------
+  sign-and-sbom:
+    needs: [build, provenance]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write   # cosign keyless
+      contents: read
+    steps:
+      - name: Download wheels (one subdir per platform)
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheels-*
+          path: wheels/
+
+      - name: Dedup identical wheels (same content, same filename)
+        shell: bash
+        run: |
+          set -euo pipefail
+          declare -A seen=()
+          while IFS= read -r line; do
+            h="${line%% *}"
+            f="${line#* }"
+            if [[ -n "${seen[$h]:-}" ]]; then
+              echo "dedup: ${f} (same as ${seen[$h]})"
+              rm -f "$f"
+            else
+              seen["$h"]="$f"
+            fi
+          done < <(sha256sum wheels/*/*.whl)
+          find wheels -name '*.whl' | sort
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3.7.0
+      - name: Sign each wheel (keyless Sigstore signature + certificate)
+        shell: bash
+        run: |
+          set -euo pipefail
+          find wheels -name '*.whl' | sort | while read -r wheel; do
+            cosign sign-blob --yes \
+              --output-signature "${wheel}.sig" \
+              --output-certificate "${wheel}.pem" \
+              "${wheel}"
+          done
+
+      - name: SBOM (SPDX JSON via syft)
+        id: sbom_spdx
+        uses: anchore/sbom-action@v0
+        with:
+          path: wheels/
+          format: spdx-json
+          upload-artifact: false
+          output-file: sbom.spdx.json
+      - name: SBOM (CycloneDX JSON via syft)
+        uses: anchore/sbom-action@v0
+        with:
+          path: wheels/
+          format: cyclonedx-json
+          upload-artifact: false
+          output-file: sbom.cyclonedx.json
+
+      - name: SHA256SUMS.txt
+        shell: bash
+        run: |
+          cd wheels
+          sha256sum ./*/*.whl | sed 's#  .*/#  #' | sort > ../SHA256SUMS.txt
+          cat ../SHA256SUMS.txt
+
+      - name: Collect release assets
+        run: |
+          mkdir -p dist
+          cp wheels/*/*.whl wheels/*/*.sig wheels/*/*.pem dist/ 2>/dev/null || true
+          cp sbom.spdx.json sbom.cyclonedx.json SHA256SUMS.txt dist/
+      - name: Upload release assets artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 5
+
+  # -------------------------------------------------------------------------
+  # 4. Assemble the GitHub Release. The SLSA generator already uploaded the
+  #    provenance attestation; this adds wheels, signatures, SBOMs, checksums.
+  # -------------------------------------------------------------------------
+  release:
+    needs: [provenance, sign-and-sbom]
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+    permissions:
+      contents: write
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: release-assets
+
+      - name: Verify every shipped wheel carries a cosign signature
+        shell: bash
+        run: |
+          set -euo pipefail
+          n_wheels=$(find release-assets -name '*.whl' | wc -l)
+          n_sigs=$(find release-assets -name '*.whl.sig' | wc -l)
+          test "$n_wheels" -eq "$n_sigs" || {
+            echo "FATAL: $n_wheels wheels but $n_sigs signatures" >&2
+            exit 1
+          }
+          echo "cosign signatures: $n_sigs/$n_wheels wheels"
+
+      - name: Create / update GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release-assets/*
