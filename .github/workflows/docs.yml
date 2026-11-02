@@ -57,7 +57,13 @@ jobs:
         run: |
           mkdir -p site_src
           cp docs/*.md site_src/
+          cp REPRODUCE.md site_src/
           cp README.md site_src/index.md
+          # Fix links in index.md for the staged site: docs/GAP_ANALYSIS.md -> GAP_ANALYSIS.md
+          sed -i 's|docs/GAP_ANALYSIS\.md|GAP_ANALYSIS.md|g' site_src/index.md
+          # Copy bench/data assets referenced in README
+          mkdir -p site_src/bench/data
+          cp bench/data/*.png bench/data/*.csv site_src/bench/data/ 2>/dev/null || true
 
       - name: Build (strict — stale nav links fail the job)
         run: mkdocs build --strict --site-dir _site
