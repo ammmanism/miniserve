@@ -51,8 +51,6 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: none
-      - uses: github/codeql-action/bundle@v3
-        if: matrix.language != 'c-cpp' || steps.cpp_prescan.outputs.cpp == 'scan'
       - name: Perform CodeQL analysis
         uses: github/codeql-action/analyze@v3
         if: matrix.language != 'c-cpp' || steps.cpp_prescan.outputs.cpp == 'scan'
