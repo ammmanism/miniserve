@@ -181,12 +181,17 @@ jobs:
           --ignore-vuln GHSA-vgrw-7cvw-pwgx
           --ignore-vuln GHSA-rrmf-rvhw-rf47
           --ignore-vuln GHSA-qfhq-4f3w-5fph
-      - name: SBOM (SPDX JSON via syft) — uploaded as artifact
-        uses: anchore/sbom-action@v0
+      # sbom-action uploads artifacts only; grype needs a file on disk, so we
+      # install the syft binary and write the SPDX JSON ourselves.
+      - name: Install syft binary
+        uses: anchore/sbom-action/action/syft@v0
+      - name: Generate SPDX SBOM on disk
+        run: syft dir:. -o spdx-json=sbom.spdx.json
+      - name: Upload SBOM artifact
+        uses: actions/upload-artifact@v4
         with:
-          format: spdx-json
-          artifact-name: sbom.spdx.json
-          upload-artifact: true
+          name: sbom.spdx.json
+          path: sbom.spdx.json
       # Grype reads .grype.yaml (issue-#12 waivers) from the checkout root.
       - name: Grype vulnerability scan on the SBOM (fail on high)
         uses: anchore/scan-action@v5
